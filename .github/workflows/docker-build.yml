@@ -1,0 +1,152 @@
+name: Build and Push Multi-Arch Docker Image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  cross-compile:
+    name: Cross-compile Rust binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+          - armv7-unknown-linux-musleabihf
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cross compilation
+        uses: actions/cache@v4
+        with:
+          path: target/${{ matrix.target }}
+          key: ${{ runner.os }}-target-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build for ${{ matrix.target }}
+        run: |
+          cross build --release --target ${{ matrix.target }}
+          mkdir -p target/cross-compiled
+          cp target/${{ matrix.target }}/release/podman-remote target/cross-compiled/podman-remote-${{ matrix.target }}
+
+      - name: Strip binary
+        run: |
+          case "${{ matrix.target }}" in
+            x86_64*)
+              strip target/cross-compiled/podman-remote-${{ matrix.target }} || true
+              ;;
+            aarch64*)
+              docker run --rm -v $PWD:/workdir:z \
+                arm64v8/ubuntu:latest \
+                bash -c "apt-get update && apt-get install -y binutils && \
+                strip /workdir/target/cross-compiled/podman-remote-${{ matrix.target }}" || true
+              ;;
+            armv7*)
+              docker run --rm -v $PWD:/workdir:z \
+                arm32v7/ubuntu:latest \
+                bash -c "apt-get update && apt-get install -y binutils && \
+                strip /workdir/target/cross-compiled/podman-remote-${{ matrix.target }}" || true
+              ;;
+          esac
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: podman-remote-${{ matrix.target }}
+          path: target/cross-compiled/podman-remote-${{ matrix.target }}
+          retention-days: 1
+
+  docker-build:
+    name: Build and push Docker image
+    needs: cross-compile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare binaries
+        run: |
+          mkdir -p target/cross-compiled
+          find artifacts -type f -name 'podman-remote-*' -exec cp {} target/cross-compiled/ \;
+          chmod +x target/cross-compiled/*
+          ls -lh target/cross-compiled/
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.multi-arch
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image digest
+        run: echo ${{ steps.meta.outputs.digest }}

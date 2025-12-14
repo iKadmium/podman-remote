@@ -1,0 +1,36 @@
+# Multi-architecture Dockerfile for pre-built binaries
+# Build with: docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t podman-remote:latest .
+
+# Use a builder stage to select the right binary based on TARGETARCH
+FROM alpine:latest AS selector
+
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+# Copy all pre-built binaries
+COPY target/cross-compiled/ /binaries/
+
+# Select and copy the appropriate binary based on target architecture
+RUN case "${TARGETARCH}${TARGETVARIANT}" in \
+    "amd64") \
+        cp /binaries/podman-remote-x86_64-unknown-linux-musl /podman-remote ;; \
+    "arm64") \
+        cp /binaries/podman-remote-aarch64-unknown-linux-musl /podman-remote ;; \
+    "armv7") \
+        cp /binaries/podman-remote-armv7-unknown-linux-musleabihf /podman-remote ;; \
+    *) \
+        echo "Unsupported architecture: ${TARGETARCH}${TARGETVARIANT}" && exit 1 ;; \
+    esac && \
+    chmod +x /podman-remote
+
+# Final stage: scratch image with only the binary
+FROM scratch
+
+# Copy the selected binary from the builder stage
+COPY --from=selector /podman-remote /podman-remote
+
+# Expose the default port
+EXPOSE 3000
+
+# Set the entrypoint
+ENTRYPOINT ["/podman-remote"]
