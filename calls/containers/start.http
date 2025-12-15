@@ -1,6 +1,6 @@
 PUT http://localhost:3000/containers/stupefied_lehmann HTTP/1.1
 content-type: application/json
-Authorization: Bearer 
+Authorization: Bearer test-secret-token
 
 {
     "running": false

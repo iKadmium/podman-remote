@@ -8,6 +8,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod auth;
 mod containers;
+mod services;
 
 #[tokio::main]
 async fn main() {
@@ -49,6 +50,12 @@ async fn main() {
         .nest(
             "/containers",
             containers::router().layer(ValidateRequestHeaderLayer::custom(
+                auth::validate_bearer_token(api_token.clone()),
+            )),
+        )
+        .nest(
+            "/services",
+            services::router().layer(ValidateRequestHeaderLayer::custom(
                 auth::validate_bearer_token(api_token),
             )),
         )

@@ -4,17 +4,37 @@
 	"name": "Rust",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
 	"image": "mcr.microsoft.com/devcontainers/rust:2-1-trixie",
+	"runArgs": [
+		"--secret",
+		"api_token"
+	],
 	"mounts": [
 		{
 			"source": "/run/user/1000/podman/podman.sock",
 			"target": "/var/run/docker.sock",
 			"type": "bind"
+		},
+		{
+			"source": "/run/user/1000/bus",
+			"target": "/run/user/1000/bus",
+			"type": "bind"
 		}
 	],
+	"containerEnv": {
+		"DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"
+	},
+	"secrets": {
+		"api_token": {
+			"description": "The secret bearer token needed to use the API"
+		}
+	},
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"rangav.vscode-thunder-client"
+				"humao.rest-client",
+				"tamasfe.even-better-toml",
+				"vadimcn.vscode-lldb",
+				"rust-lang.rust-analyzer"
 			]
 		}
 	}
