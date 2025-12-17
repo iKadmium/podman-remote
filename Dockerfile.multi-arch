@@ -29,6 +29,9 @@ FROM scratch
 # Copy the selected binary from the builder stage
 COPY --from=selector /podman-remote /podman-remote
 
+# Run as UID 1000, GID 1000 for D-Bus socket access
+USER 1000:1000
+
 # Expose the default port
 EXPOSE 3000
 
